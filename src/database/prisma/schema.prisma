@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LanguagePreference {
+  en
+  hinglish
+  mixed
+}
+
+enum UserRole {
+  user
+  admin
+}
+
+enum UserStatus {
+  active
+  blocked
+  deleted
+}
+
+enum InterviewMode {
+  dsa
+  core_cs
+  mixed
+}
+
+enum Difficulty {
+  easy
+  medium
+  hard
+}
+
+enum InterviewLanguage {
+  en
+  hinglish
+}
+
+enum SessionStatus {
+  created
+  active
+  waiting_for_candidate
+  evaluating
+  generating_next_question
+  paused
+  completed
+  failed
+  expired
+}
+
+enum TurnSpeaker {
+  interviewer
+  candidate
+}
+
+enum ProviderType {
+  llm
+  stt
+  tts
+}
+
+model User {
+  id                 String              @id @default(uuid()) @db.Uuid
+  name               String
+  email              String              @unique
+  passwordHash       String
+  languagePreference LanguagePreference  @default(en)
+  role               UserRole            @default(user)
+  status             UserStatus          @default(active)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  lastLoginAt        DateTime?
+  sessions           InterviewSession[]
+  auditEvents        AuditEvent[]
+}
+
+model InterviewSession {
+  id                    String             @id @default(uuid()) @db.Uuid
+  userId                String             @db.Uuid
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode                  InterviewMode
+  difficulty            Difficulty
+  language              InterviewLanguage
+  status                SessionStatus      @default(created)
+  currentQuestionIndex  Int                @default(0)
+  totalQuestionsTarget  Int                @default(5)
+  providerLlm           String
+  providerStt           String
+  providerTts           String
+  overallScore          Decimal?           @db.Decimal(5, 2)
+  technicalScore        Decimal?           @db.Decimal(5, 2)
+  communicationScore    Decimal?           @db.Decimal(5, 2)
+  confidenceScore       Decimal?           @db.Decimal(5, 2)
+  clarityScore          Decimal?           @db.Decimal(5, 2)
+  depthScore            Decimal?           @db.Decimal(5, 2)
+  startedAt             DateTime?
+  endedAt               DateTime?
+  lastActivityAt        DateTime?
+  sessionSummary        String?
+  promptVersion         String             @default("v1")
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  turns                 InterviewTurn[]
+  evaluations           TurnEvaluation[]
+  feedback              SessionFeedback?
+  providerLogs          ProviderLog[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model InterviewTurn {
+  id                   String           @id @default(uuid()) @db.Uuid
+  sessionId            String           @db.Uuid
+  session              InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  turnIndex            Int
+  speaker              TurnSpeaker
+  questionText         String?
+  answerText           String?
+  audioUrl             String?
+  transcriptConfidence Decimal?         @db.Decimal(5, 4)
+  clientTurnId         String
+  latencyMs            Int?
+  createdAt            DateTime         @default(now())
+  evaluation           TurnEvaluation?
+  providerLogs         ProviderLog[]
+
+  @@unique([sessionId, clientTurnId])
+  @@unique([sessionId, turnIndex, speaker])
+  @@index([sessionId, createdAt])
+}
+
+model TurnEvaluation {
+  id                    String           @id @default(uuid()) @db.Uuid
+  turnId                String           @unique @db.Uuid
+  turn                  InterviewTurn    @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  sessionId             String           @db.Uuid
+  session               InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  scoreOverall          Decimal          @db.Decimal(5, 2)
+  scoreTechnical        Decimal          @db.Decimal(5, 2)
+  scoreCommunication    Decimal          @db.Decimal(5, 2)
+  scoreStructure        Decimal          @db.Decimal(5, 2)
+  scoreConfidence       Decimal          @db.Decimal(5, 2)
+  scoreAccuracy         Decimal?         @db.Decimal(5, 2)
+  strengths             Json
+  weaknesses            Json
+  followUpRecommended   Boolean
+  followUpReason        String?
+  improvementTip        String
+  modelName             String
+  rawModelOutput        Json?
+  createdAt             DateTime         @default(now())
+
+  @@index([sessionId])
+}
+
+model SessionFeedback {
+  id                String           @id @default(uuid()) @db.Uuid
+  sessionId         String           @unique @db.Uuid
+  session           InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  summary           String
+  strengths         Json
+  weaknesses        Json
+  actionPlan        Json
+  recommendedTopics Json
+  nextSessionFocus  String
+  readinessEstimate String?
+  createdAt         DateTime         @default(now())
+}
+
+model ProviderLog {
+  id              String            @id @default(uuid()) @db.Uuid
+  sessionId       String?           @db.Uuid
+  session         InterviewSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  turnId          String?           @db.Uuid
+  turn            InterviewTurn?    @relation(fields: [turnId], references: [id], onDelete: SetNull)
+  providerType    ProviderType
+  providerName    String
+  requestPayload  Json
+  responsePayload Json?
+  success         Boolean
+  statusCode      Int?
+  errorCode       String?
+  errorMessage    String?
+  latencyMs       Int?
+  createdAt       DateTime          @default(now())
+
+  @@index([sessionId, createdAt])
+  @@index([turnId])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @db.Uuid
+  actor      User?     @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  eventType   String
+  entityType  String
+  entityId    String?  @db.Uuid
+  metadata    Json
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model IdempotencyRecord {
+  id           String   @id @default(uuid()) @db.Uuid
+  scope        String
+  key          String
+  responseHash String
+  responseBody Json
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+}
+
+model SessionQuestionBank {
+  id                String            @id @default(uuid()) @db.Uuid
+  topic             String
+  difficulty        Difficulty
+  language          InterviewLanguage
+  questionText      String
+  followUpQuestions Json
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([topic, difficulty, language])
+}
